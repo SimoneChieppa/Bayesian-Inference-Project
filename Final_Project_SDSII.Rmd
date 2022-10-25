@@ -1,0 +1,659 @@
+---
+title: "Project SDS II"
+subtitle: "Surgical: Institutional ranking"
+author: "Simone Chieppa1846140"
+date: "21/07/2022"
+output:
+  pdf_document:
+    keep_tex: yes
+    toc: no
+  html_document:
+    keep_md: yes
+    theme: united
+header-includes: 
+              - \usepackage[english]{babel}
+              - \usepackage{amsmath}
+              - \usepackage{enumerate}
+              - \usepackage{setspace}
+              - \usepackage{docmute}
+              - \usepackage{fancyhdr}
+              - \usepackage{graphicx}
+              - \usepackage{rotating}
+              - \usepackage{ucs}
+              - \pagestyle{fancy}
+              - \fancyhf{}
+              - \rhead{Test \#01}
+              - \cfoot{\thepage}
+
+
+---
+
+
+```{r setup, include=FALSE}
+library(knitr)
+library(ggplot2)
+library(R2jags)
+library(ggmcmc)
+library(mcmc)
+library(bayesplot)
+knitr::opts_chunk$set(echo = TRUE)
+
+# the default output hook
+hook_output = knit_hooks$get('output')
+knit_hooks$set(output = function(x, options) {
+  if (!is.null(n <- options$out.lines)) {
+    x = unlist(stringr::str_split(x, '\n'))
+    if (length(x) > n) {
+      # truncate the output
+      x = c(head(x, n), '....\n')
+    }
+    x = paste(x, collapse = '\n') # paste first n lines together
+  }
+  hook_output(x, options)
+})
+```
+
+```{r, include=FALSE, include=FALSE, warning=FALSE}
+opts_chunk$set(out.lines = 23)
+```
+
+
+```{r,echo=FALSE}
+data_list= list(n = c(47, 148, 119, 810,   211, 196, 148, 215, 207, 97, 256, 360),
+   r = c(0, 18, 8, 46, 8, 13, 9, 31, 14, 8, 29, 24),
+   N = 12)
+data = data.frame(c('A','B','C','D','E','F','G','H','I','J','K','L'),data_list$n,data_list$r)
+names(data) <- c('Hospital', 'No of ops', 'No of deaths')
+
+```
+
+In this project I decided to analyze the analysis done from the authors in 'Goudie, R. J. B., Turner, R. M., De Angelis, D., Thomas, A. (2020) MultiBUGS: A parallel implementation of the BUGS modelling framework for faster Bayesian inference. Journal of Statistical Software, 95(7).' that considers mortality rates in 12 hospitals performing cardiac surgery in babies.
+
+I will first replicate in a more detailed way the analysis done by the authors using the models implemented in the paper (a logit model and a beta model) and I will compare them with the results of a a frequentist analysis. Then I will also implement probit model that is not present in the paper and I will analyze the results and compare this model with the others.
+But first let's observe the data.
+
+```{r, echo=F}
+kable(data)
+```
+
+## No of deaths
+
+```{r}
+summary(data$`No of deaths`)
+```
+
+We can notice that the median and the mean of the number of deaths are really different, that means that the distribution is not symmetric.
+Let's have a better visualization of these informations with a boxplot where the red point represent the mean.
+
+```{r,echo = FALSE, fig.height= 3,fig.width=3,warning=FALSE,message=FALSE}
+ggplot(data, aes(x='', y=`No of deaths`)) +
+    geom_boxplot(color="violet", fill="orange", alpha=0.5) +
+    stat_summary(fun.y=mean, geom="point", shape=20, size=5, color="red", fill="red") +
+    theme(legend.position="none")
+```
+
+```{r,echo = FALSE,warning=FALSE,message=FALSE}
+ggplot(data, aes(x=`No of deaths`))+
+  geom_histogram(color="darkblue", fill="lightblue")+labs(title="Distribution of the Nuber of deaths")
+```
+Also from the histogram we can observe that the distribution is not symmetric and that most hospitals had a number of death between 8 and 20. We can also notice that there are two outliers (0 death and 46 death) that are far away from the other values.
+
+
+## No of operations
+```{r}
+summary(data$`No of ops`)
+```
+It is interesting to notice that also in the number of operations the mean and the median are really different, in this case the mean is even bigger then the 3rd quartile as we can see also in the boxplot below
+
+```{r,echo = FALSE, fig.height= 3,fig.width=3,warning=FALSE,message=FALSE}
+ggplot(data, aes(x='', y=`No of ops`)) +
+    geom_boxplot(color="violet", fill="green", alpha=0.5) +
+    stat_summary(fun.y=mean, geom="point", shape=20, size=5, color="red", fill="red") +
+    theme(legend.position="none")
+```
+
+```{r,echo = FALSE, warning=FALSE,message=FALSE}
+ggplot(data, aes(x=`No of ops`))+
+  geom_histogram(color="purple", fill="violet")+labs(title="Distribution of the Nuber of operations")
+```
+We can notice that there is an outlier that is way bigger than the other values, this is the reson why the mean is so large, in fact the mean is strongly affected by the outliers. Most of the values are concentrated around 100 and 200.
+
+
+
+
+
+
+## No of deaths vs No operations
+
+Now lets see the data together:
+
+
+```{r,echo = FALSE,warning=FALSE,message=FALSE}
+ggplot(data, aes(x=`No of ops`, y=`No of deaths`)) +
+  geom_point() + 
+  geom_text(label= data$Hospital,size = 4,nudge_x = 1.40, nudge_y = 1.40, 
+    check_overlap = F) + geom_point(color = ('orange'))
+```
+We can observe that the hospital with more operation (hospital D with more than 800 operations) is also the one with more deaths (46) and the hospital with less operations (hospital A with less than 50 operations) is the one with less deaths (0).
+
+## Beta model
+
+We first start with the most simple model assuming as the authors does in the paper that the true failure probabilities are independent for each hospital.
+We assume that the number of deaths $r_i$ for hospital $i$are modelled as a binary response variable with failure probability $p_i$:
+$$r_i \sim Binomial(p_i,n_i)  $$
+Since we assume that the failure probabilities are indipendent we can model $p_i$ as:
+
+$$p_i \sim Beta(1.0,1.0)$$
+That is equivalent to use an uniform distribution $U([0,1])$.
+Here we can have a look at the very simple graphical model:
+
+![graphical model](./graphical1.png){width=70%}
+
+
+As the authors do I will run two different chains from two different lists of initial values to have more accurate results and I will run 15000 iterations. I decided to n.burnin parameter equal to 1000 to remove the initial noise.
+```{r,message=FALSE}
+parameters <- c('p')
+
+inits <- list(list(p = c(0.1, 0.1, 0.1, 0.1,   0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1)),
+              list(p = c(0.5, 0.5, 0.5, 0.5,   0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5)))
+
+
+initial.values <- list(inits)
+
+surgical_beta <- jags(data=data_list,inits=inits,parameters.to.save=parameters,model.file="Model1.txt",
+                      n.chains=2,n.thin = 1,n.burnin=1000,n.iter=15000)
+print(surgical_beta)
+```
+
+
+In this table we can see the point estimates values for $p_i$ and we can also build the credible intervals using the quantiles. It is interesting to notice that all the credible intervals for the $p_i$ do not contain the 0, that means that the variables are statistically significant.
+We can also notice from the R_hat = 1 that the series converges.
+
+The hospital with the lowest probability of death is the first one (hospital A) and the hospital with the highest probability of death is the 8th (hospital H).
+We can also notice that the credible intervel of p[1] is very big and that is not a good sign
+Let's compare the results with the ones in the paper:
+![results](./results1.png)
+
+The results are really similar and that is a good sign!
+Now let's see the trace-plots of the simulations of each parameter
+
+
+
+
+```{r, echo=FALSE}
+S = as.mcmc(surgical_beta)
+color_scheme_set("pink")
+p <- mcmc_trace(S,  pars = c("p[1]", "p[2]",'p[3]','p[4]'),
+                facet_args = list(nrow = 2, labeller = label_parsed))
+p + facet_text(size = 15)
+```
+
+
+```{r, echo=FALSE}
+
+color_scheme_set("pink")
+p <- mcmc_trace(S,  pars = c("p[5]", "p[6]",'p[7]','p[8]'),
+                facet_args = list(nrow = 2, labeller = label_parsed))
+p + facet_text(size = 15)
+```
+
+```{r, echo=FALSE}
+
+color_scheme_set("pink")
+p <- mcmc_trace(S,  pars = c("p[9]", "p[10]",'p[11]','p[12]'),
+                facet_args = list(nrow = 2, labeller = label_parsed))
+p + facet_text(size = 15)
+```
+
+  
+The traceplot that shows the sampled values per chain and node throughout iterations. Here we can see the two chains that both have a random behaviour around the same intervals of values.
+
+Now let's see the parameters's density
+
+
+```{r,echo=FALSE}
+color_scheme_set("pink")
+mcmc_dens_overlay(S, pars = c("p[1]", "p[2]",'p[3]','p[4]'),
+                  facet_args = list(nrow = 2)) +
+                  facet_text(size = 14)
+```
+
+
+```{r,echo=FALSE}
+
+mcmc_dens_overlay(S, pars = c("p[5]", "p[6]",'p[7]','p[8]'),
+                  facet_args = list(nrow = 2)) +
+                  facet_text(size = 14)
+```
+
+```{r,echo=FALSE}
+
+mcmc_dens_overlay(S, pars = c("p[9]", "p[10]",'p[11]','p[12]'),
+                  facet_args = list(nrow = 2)) +
+                  facet_text(size = 14)
+```
+
+
+
+
+From these plots we can notice that the two chains are almost overlapped and that is a good sign, it means that we reached the stationarity.
+
+To see when the parameters reached the stationarity we can see the plots of the running means that rapresents the empirical means that reaches their stationarity
+
+```{r,echo = FALSE,warning=FALSE,message=FALSE}
+library(mcmcplots)
+rmeanplot(S,c('p[1]','p[2]','p[3]','p[4]'),style = 'plain')
+```
+
+```{r,echo = FALSE,warning=FALSE,message=FALSE}
+rmeanplot(S,c('p[5]','p[6]','p[7]','p[8]'),style = 'plain')
+```
+
+```{r,echo = FALSE,warning=FALSE,message=FALSE}
+rmeanplot(S,c('p[9]','p[10]','p[11]','p[12]'),style = 'plain')
+```
+
+
+We can notice that the last parameter that reaches the stationarity is p[1].
+
+Now we can have a look at the correlation between parameters
+```{r,fig.height=7,fig.width=7}
+corrplot::corrplot(cor(surgical_beta$BUGSoutput$sims.matrix)[-3,-3], 
+                   method = "color", addCoef.col="grey")
+```
+
+We can observe that the correlation between all the parameters is really low, almost 0 for between each parameter
+
+## Frequentist approach
+
+Here we implement a frequentist approach and then I will compare the result with the bayesian analysis done before.
+In frequentist inference probabilities are interpreted in terms of the relative frequency of a certain observable event occurring, instead in Bayesian inference, since the parameters are unobservable, probabilities associated with unobservable parameters are most naturally interpreted as “degrees of belief” on a particular state of the unobservable parameters.
+Another difference is that in a frequentist approach procheadures are random but parameters are fixed, in a bayesian approach instead everything is random.
+
+Now let's see the implementation of a beta model (or beta regression) with a frequentist approach.
+
+### Small reminder of beta regression
+
+The class of beta regression models is commonly used  to model variables that assume values in the interval (0, 1). It is based on the assumption that the dependent variable is beta-distributed and that its mean is related to a set of regressors through a linear predictor with unknown coefficients and a link function.
+But we are in the most simple case, in fact a $beta(1,1)$ is equivalent to a $U([0,1])$ so the $p_i$ for the hospitals are just  $\frac{No\ of\ deaths}{No\ of\ ops}$
+
+### Implementation
+
+```{r}
+p = data$`No of deaths`/data$`No of ops`
+p_estimates = data.frame(c('p[1]','p[2]','p[3]','p[4]','p[5]','p[6]','p[7]','p[8]',
+                           'p[9]','p[10]','p[11]','p[12]'),p)
+names(p_estimates) <- c('p', 'estimates')
+kable(p_estimates)
+```
+
+We can observe that the estimates are similar to the estimates made with the bayesian model but there are some differences, for example p[1] is equal to 0, this can represent one of the limit of the frequentist approach, in fact even if in our data the first hospital has no deaths it is impossible that the probability is 0, in fact in the bayesian approach p[1] is near to 0 but not 0. The frequentist approach take in count only our data and not prior information or belief.
+
+## Logit model
+
+If we assume that the failure rates across the hospitals are similar in some way we can use a more realistic model. We can specify a logit model for the true failure probabilities $p_i$ as follows:
+
+$$logit(p_i)=b_i$$
+$$b_i \sim N(\mu,\tau)$$
+Where $\mu$ is the population mean and $\tau$ is the precision also known as the reciprocal of the variance ($\tau = \frac{1}{\sigma^2}$).
+Here we can see the graphical model of this bayesian analysis.
+
+![graphical model](./graphical_model.png){width=70%}
+
+Also for this model we will run two different chains with 15000 iterations:
+```{r,message=FALSE}
+parameters <- c('p')
+
+inits <- list(list(b = c( 0.1,   0.1,   0.1,   0.1,   0.1,   0.1,   0.1,   0.1,  
+                            0.1,   0.1,   0.1,   0.1),tau = 1, mu = 0),
+              list(b = c( 0.5,   0.5,   0.5,   0.5,   0.5,   0.5,   0.5,  
+                                  0.5,   0.5,   0.5,   0.5, 0.5),tau = 0.1, mu = 1.0))
+
+
+initial.values <- list(inits)
+
+surgical_logit <- jags(data=data_list,inits=inits,parameters.to.save=parameters,
+                       model.file="Model2.txt",n.chains=2,n.thin = 1,n.burnin=1000,n.iter=15000)
+print(surgical_logit)
+```
+
+We can notice that the results are really different from the ones of the model used before, this is because we used a more complex model and we assumed that the failure probabilities are not indipendent but similar in some way.
+also in this model all the credible intervals for the $p_i$ do not contain the 0, so the variables are statistically significant.
+The R_hat = 1 so the series converges.
+We can observe that in contrast with the model used before, here  the hospital with the lowest probability of death is 5th (hospital E) with the beta model it was hospital A.The hospital with the highest probability of death is still hospital H.
+
+Now we compare the results with the paper's results:
+
+![results](./results2.png)
+The results are really similar, the most different estimates is the one for p[2] that is 0.104 in my results and 0.1031 in the paper.
+Also for this model we are going to see the traceplot
+
+```{r, echo=FALSE}
+S = as.mcmc(surgical_logit)
+color_scheme_set("orange")
+p <- mcmc_trace(S,  pars = c("p[1]", "p[2]",'p[3]','p[4]'),
+                facet_args = list(nrow = 2, labeller = label_parsed))
+p + facet_text(size = 15)
+```
+
+```{r, echo=FALSE}
+color_scheme_set("orange")
+p <- mcmc_trace(S,  pars = c("p[5]", "p[6]",'p[7]','p[8]'),
+                facet_args = list(nrow = 2, labeller = label_parsed))
+p + facet_text(size = 15)
+```
+
+```{r, echo=FALSE}
+color_scheme_set("orange")
+p <- mcmc_trace(S,  pars = c("p[9]", "p[10]",'p[11]','p[12]'),
+                facet_args = list(nrow = 2, labeller = label_parsed))
+p + facet_text(size = 15)
+```
+
+We can notice as in the model before that the chains have a random behaviour around the estimate
+
+```{r,echo=FALSE}
+color_scheme_set("orange")
+mcmc_dens_overlay(S, pars = c("p[1]", "p[2]",'p[3]','p[4]'),
+                  facet_args = list(nrow = 2)) +
+                  facet_text(size = 14)
+```
+
+
+```{r,echo=FALSE}
+
+mcmc_dens_overlay(S, pars = c("p[5]", "p[6]",'p[7]','p[8]'),
+                  facet_args = list(nrow = 2)) +
+                  facet_text(size = 14)
+```
+
+```{r,echo=FALSE}
+
+mcmc_dens_overlay(S, pars = c("p[9]", "p[10]",'p[11]','p[12]'),
+                  facet_args = list(nrow = 2)) +
+                  facet_text(size = 14)
+```
+
+
+```{r,echo = FALSE,warning=FALSE,message=FALSE}
+rmeanplot(S,c('p[1]','p[2]','p[3]','p[4]'),style = 'plain')
+```
+
+```{r,echo = FALSE,warning=FALSE,message=FALSE}
+rmeanplot(S,c('p[5]','p[6]','p[7]','p[8]'),style = 'plain')
+```
+
+```{r,echo = FALSE,warning=FALSE,message=FALSE}
+rmeanplot(S,c('p[9]','p[10]','p[11]','p[12]'),style = 'plain')
+```
+
+From the running means seams that in this model the parameters take a more time to converge (just little more time)
+
+```{r,fig.height=7,fig.width=7}
+corrplot::corrplot(cor(surgical_logit$BUGSoutput$sims.matrix)[-3,-3], 
+                   method = "color", addCoef.col="grey")
+```
+
+There is not a big correlation between the parameters but it is still way bigger than the beta model seen before, for example between p[1] and p[5] the correlation is 0.26.
+
+## Frequentist approach
+
+
+I will use the lme4 packet to implement a logistic regression with random effect and then I will compare the results, lme4 is used for generalized or linear model with random or fixed effects.
+To assume that in this model there are random effect means that part of the variability depend from the hospitals.
+
+```{r,echo = FALSE,warning=FALSE,message=FALSE}
+library(lme4)
+
+logistic<-glmer(cbind(`No of deaths`,`No of ops`-`No of deaths`) ~ (1| Hospital), 
+                data=data, family=binomial)
+coef(logistic)
+
+```
+These are the coefficient of the random effect in a frequentist approach but how I can interpret these results?
+for the interpretation I just need to extrapolate the probabilities from these coefficients so I can compare them with the other analysis. To transform these coefficients in probabilities I just need to do exp(coef)/(1+exp(coef))
+
+```{r}
+c = coef(logistic)$Hospital[,1]
+p = rep(NA,12)
+j = 1
+for(i in c){
+
+  p[j] = exp(i)/(1+exp(i))
+  j=j+1
+}
+p_estimates = data.frame(c('p[1]','p[2]','p[3]','p[4]','p[5]','p[6]','p[7]','p[8]',
+                           'p[9]','p[10]','p[11]','p[12]'),p)
+names(p_estimates) <- c('p', 'estimates')
+kable(p_estimates)
+
+```
+
+These estimates of the parameters are really similar to the estimates done with the bayesian model.
+
+## Probit model
+
+The probit model is similar to the logit model, but it is based on probits instead logistic functions.
+The process for calculating probabilities in logit and probits differ from each other because logistic functions use linear combinations while probity uses cumulative standard normal distribution function.
+
+
+In Logit: $Pr(Y=1 | X) = (1 + e^{-X'\beta})^{-1}$  
+
+In Probit: $Pr(Y=1 | X) = \Phi(X'\beta)$
+
+Also for this model we will run two different chains with 15000 iterations:
+
+```{r,message=FALSE}
+parameters <- c('p')
+
+inits <- list(list(b = c( 0.1,   0.1,   0.1,   0.1,   0.1,   0.1,   0.1,   0.1,  
+                            0.1,   0.1,   0.1,   0.1),tau = 1, mu = 0),
+              list(b = c( 0.5,   0.5,   0.5,   0.5,   0.5,   0.5,   0.5,  
+                                  0.5,   0.5,   0.5,   0.5, 0.5),tau = 0.1, mu = 1.0))
+
+
+initial.values <- list(inits)
+
+surgical_probit <- jags(data=data_list,inits=inits,parameters.to.save=parameters,
+                       model.file="model3.txt",n.chains=2 , n.thin = 1,n.burnin=1000,n.iter=15000)
+print(surgical_probit)
+```
+
+Observing these result we can notice that are really similar to the results obtained withthe logit model, also here ore the estimates are significant and the chains converges.
+In this model the hospital A and E have the same probabilities and they are both the hospitals with the lowest probabilities of death, so it seems that this model is a 'compromise' between the other two models.
+
+Now let's have a look to the tracplots, density plots and running means.
+
+```{r, echo=FALSE}
+S = as.mcmc(surgical_probit)
+color_scheme_set("green")
+p <- mcmc_trace(S,  pars = c("p[1]", "p[2]",'p[3]','p[4]'),
+                facet_args = list(nrow = 2, labeller = label_parsed))
+p + facet_text(size = 15)
+```
+
+```{r, echo=FALSE}
+
+p <- mcmc_trace(S,  pars = c("p[5]", "p[6]",'p[7]','p[8]'),
+                facet_args = list(nrow = 2, labeller = label_parsed))
+p + facet_text(size = 15)
+```
+
+```{r, echo=FALSE}
+
+p <- mcmc_trace(S,  pars = c("p[9]", "p[10]",'p[11]','p[12]'),
+                facet_args = list(nrow = 2, labeller = label_parsed))
+p + facet_text(size = 15)
+```
+
+
+```{r,echo=FALSE}
+color_scheme_set("green")
+mcmc_dens_overlay(S, pars = c("p[1]", "p[2]",'p[3]','p[4]'),
+                  facet_args = list(nrow = 2)) +
+                  facet_text(size = 14)
+```
+
+
+```{r,echo=FALSE}
+
+mcmc_dens_overlay(S, pars = c("p[5]", "p[6]",'p[7]','p[8]'),
+                  facet_args = list(nrow = 2)) +
+                  facet_text(size = 14)
+```
+
+```{r,echo=FALSE}
+
+mcmc_dens_overlay(S, pars = c("p[9]", "p[10]",'p[11]','p[12]'),
+                  facet_args = list(nrow = 2)) +
+                  facet_text(size = 14)
+```
+
+
+```{r,echo = FALSE,warning=FALSE,message=FALSE}
+rmeanplot(S,c('p[1]','p[2]','p[3]','p[4]'),style = 'plain')
+```
+
+```{r,echo = FALSE,warning=FALSE,message=FALSE}
+rmeanplot(S,c('p[5]','p[6]','p[7]','p[8]'),style = 'plain')
+```
+
+```{r,echo = FALSE,warning=FALSE,message=FALSE}
+rmeanplot(S,c('p[9]','p[10]','p[11]','p[12]'),style = 'plain')
+```
+
+It is interesting to notice from the running means that the probit model takes way more time to converge than the beta and the logit model.
+
+```{r,fig.height=7,fig.width=7}
+corrplot::corrplot(cor(surgical_logit$BUGSoutput$sims.matrix)[-3,-3],
+                   method = "color", addCoef.col="grey")
+```
+
+The corrplots of the logit and the probit models are almost identical.
+
+## Frequentist approach
+
+I will use the same approach of the logistic model I will just change the function from logit to probit
+
+
+```{r}
+probit_freq<-glmer(cbind(`No of deaths`,`No of ops`-`No of deaths`) ~ (1| Hospital), 
+                data=data, family = binomial(link = 'probit'))
+coef(probit_freq)
+
+```
+
+To interpret the these coefficients and transform them in probabilities I just need to compute the CDF on the standard normal distribution on the coefficients.
+
+
+```{r}
+c = coef(probit_freq)$Hospital[,1]
+p = rep(NA,12)
+j = 1
+for(i in c){
+
+  p[j] = pnorm(i)
+  j=j+1
+}
+p_estimates = data.frame(c('p[1]','p[2]','p[3]','p[4]','p[5]','p[6]','p[7]','p[8]',
+                           'p[9]','p[10]','p[11]','p[12]'),p)
+names(p_estimates) <- c('p', 'estimates')
+kable(p_estimates)
+```
+
+The estimations are really similar to the estimations made with a bayesian approach they are just a little bit smaller, for example p[3] is 0.701 instead of 0.702.
+
+## Comparison of the three models
+
+To compare the three models we can compare the DIC value (Deviance Information Criterion).
+The DIC value is based on the deviance and is calculated in the following way:
+
+$$DIC = 2p_D + D(\bar\theta) $$
+where $D(\bar\theta) = -2log(L(\bar\theta))$ that is the deviance of the model.
+
+Now we can compute it for the three models with Jags and see which model has the lowest value
+
+```{r, echo = FALSE}
+c("Beta model"=surgical_beta$BUGSoutput$DIC,"Logit model"=surgical_logit$BUGSoutput$DIC,"Probit model" = surgical_probit$BUGSoutput$DIC)
+```
+
+It is clear that from this value the best model seems to be the Beta model, but we should also consider that the Beta model is the less realistic because in the real world  we should consider some random effects.
+It is interesting to notice that from the two most realistic models (logit and probit) the probit model seems to be better.
+
+To have another comparison between the models we can compare the estimates that we got with the real data.
+Since we estimated the probabilities of death we can compare the real number of death in the hospitals with the one computed with the probabilities of our model.
+
+```{r}
+n = data_list$n
+r = data_list$r
+p_beta = surgical_beta$BUGSoutput$summary[2:13,1]
+p_logit = surgical_logit$BUGSoutput$summary[2:13,1]
+p_probit = surgical_probit$BUGSoutput$summary[2:13,1]
+r_beta = p_beta*n
+r_logit = p_logit*n
+r_probit = p_probit*n
+```
+```{r,echo = FALSE}
+plot(n,r, col = "red",
+lwd = 2, ylim = c(0,50),xlim= c(0,1100),
+xlab = "Number of operations", ylab = "Number of deaths")
+points(n, r_beta, col ='pink',lwd = 2)
+legend("topright", legend = c("real data","beta model"),col = c("red", "pink"),pch = "-", pt.cex = 3)
+```
+
+```{r,echo = FALSE}
+plot(n,r, col = "red",
+lwd = 3, ylim = c(0,50),xlim= c(0,1100),
+xlab = "Number of operations", ylab = "Number of deaths")
+points(n, r_logit, col ='orange',lwd = 3)
+legend("topright", legend = c("real data","logit model"),col = c("red", "orange"),pch = "-", pt.cex = 3)
+```
+
+
+```{r,echo = FALSE}
+plot(n,r, col = "red",
+lwd = 3, ylim = c(0,50),xlim= c(0,1100),
+xlab = "Number of operations", ylab = "Number of deaths")
+points(n, r_probit, col ='green',lwd = 3)
+legend("topright", legend = c("real data","probit model"),col = c("red", "green"),pch = "-", pt.cex = 3)
+```
+
+As it was expected the r estimates more similar to the real data are the one made with the Beta model but us I said before this model fits well with this data but this is the less realistic model in the real world.
+Another interesting but expected thing is that the logit and probit models made really similar estimates.
+
+## Predictions 
+
+We can use the models that we studied also to pedict the number of death in one of the hospital given the number of operations.
+We consider the probit model because it turned out to be a little bit better than the logit and it is more realistic than the beta model.
+If we assume that each hospital does 500 new operations we can predict the number of death.
+```{r}
+deaths = rep(NA,12)
+
+for(j in (1:12)){
+  deaths[j] = rbinom(1,500,p_probit[j])
+}
+n_deaths = data.frame(c('A','B','C','D','E','F','G','H','I','J','K','L'),deaths)
+names(n_deaths) <- c('Hospital', 'n_deaths')
+kable(n_deaths)
+```
+
+The worst hospital is definetely the hospital H, the best one is the hospital D.
+
+## Conclusion
+
+I analyzed the different models, it is clear that the best model seems to be the beta model but the assumptions are not realistic, the logit and probit model that assume that the failure rates across hospitals are similar in some way are more realistic and reliable.
+Between the logit and probit models the second one is a little bit preferable for this case.
+I also found out that in this case the best hospital where a baby should go to have cardiac surgery is the hospital, Nobody should ever take a baby to the hospital H!
+
+In conclusion with this project I understood the importance that the random effects can have in a model and that they can be fundamental also in a frequentist approach.
+
+
+
+
+
+
+
+
+
+
+
