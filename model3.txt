@@ -1,0 +1,12 @@
+  model
+      {
+         for( i in 1 : N ) {
+            b[i] ~ dnorm(mu,tau)
+            r[i] ~ dbin(p[i],n[i])
+            probit(p[i]) <- b[i]
+            }
+         pop.mean <- pnorm(mu,0, 1)
+         mu ~ dnorm(0.0,1.0E-6)
+         sigma <- 1 / sqrt(tau)
+         tau ~ dgamma(0.001,0.001)   
+      }
